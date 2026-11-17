@@ -211,6 +211,71 @@ server.listen(3000, () => {
     console.log('🔌 API ve WebSocket sunucusu 3000 portunda dinliyor.');
 });
 
+// =======================================================================
+// MOCK API (SAHTE KURUMLAR) - İSKİ FATURA SORGULAMA
+// =======================================================================
+app.get('/mock-api/iski/inquiry/:aboneNo', (req, res) => {
+    const aboneNo = req.params.aboneNo;
+
+    // Fatura tutarını 100 ile 500 TL arası rastgele (dinamik) üretelim
+    const randomTutar = (Math.random() * 400 + 100).toFixed(2);
+    const referansNo = 'REF-' + Math.floor(Math.random() * 1000000);
+
+    console.log(`\n🌐 [MOCK İSKİ API] ${aboneNo} numaralı abone için sorgu alındı...`);
+
+    // TEST SENARYOSU 1: Abone numarası "9999" ise DMN tablosunu test etmek için "Ödenmiş" fatura dön.
+    if (aboneNo === '9999') {
+        return res.json({
+            aboneNo: aboneNo,
+            isim: "AH*** AK***",
+            tutar: 0,
+            sonOdemeTarihi: "2026-11-10",
+            durum: "Ödendi", // DMN bu statüyü görünce reddetmeli!
+            faturaReferansNo: referansNo
+        });
+    }
+
+    // TEST SENARYOSU 2: Normal (Ödenmemiş) Fatura
+    res.json({
+        aboneNo: aboneNo,
+        isim: "AH*** AK***",
+        tutar: parseFloat(randomTutar),
+        sonOdemeTarihi: "2026-11-25",
+        durum: "Ödenmedi", // DMN bu statüyü görünce onaylamalı!
+        faturaReferansNo: referansNo
+    });
+});
+// --- FATURA ÖDEME SÜRECİ BAŞLATMA (Yeni Eklenecek) ---
+app.post('/api/pay-bill', (req, res) => {
+    const { customerId, accountNumber, subscriberNumber, category } = req.body;
+
+    // 1. Önce müşterinin güncel bakiyesini DB'den çekiyoruz ki DMN karar verebilsin
+    db.get(`SELECT balance, iban, customer_type FROM Accounts WHERE customer_id = ? AND account_number = ?`, 
+    [customerId, accountNumber], async (err, row) => {
+        if (err || !row) return res.status(404).json({ error: "Ödeme yapılacak hesap bulunamadı" });
+
+        try {
+            // 2. Camunda'daki Fatura sürecini başlatıyoruz (Process_1gmhbt4 senin BPMN ID'n)
+            const camundaResponse = await axios.post('http://localhost:8081/engine-rest/process-definition/key/Process_1gmhbt4/start', {
+                variables: {
+                    aboneNo: { value: subscriberNumber, type: "String" }, // Fatura Sorgula task'ı bunu kullanacak
+                    payerAccount: { value: accountNumber, type: "String" }, // Gün Sonu EOD tablosu bunu kullanacak
+                    Balance: { value: parseFloat(row.balance), type: "Double" }, // DMN tablosu bakiye kontrolü için kullanacak
+                    customerType: { value: row.customer_type || "STANDART", type: "String" },
+                    institutionName: { value: category, type: "String" }, // "İSKİ", "Elektrik" vb.
+                    limitAsimiVarMi: { value: false, type: "Boolean" },
+                    kurumAPIAktifMi: { value: true, type: "Boolean" }
+                }
+            });
+            res.status(200).json({ success: true, processInstanceId: camundaResponse.data.id, message: "Fatura ödeme süreci başlatıldı." });
+        } catch (error) {
+            console.error("Camunda fatura başlatma hatası:", error.response?.data || error.message);
+            res.status(500).json({ error: "Fatura süreci başlatılamadı" });
+        }
+    });
+});
+
+
 // 2. Camunda Ayarları
 const config = { baseUrl: 'http://localhost:8081/engine-rest', use: logger, asyncResponseTimeout: 10000 };
 const client = new Client(config);
@@ -323,11 +388,16 @@ client.subscribe('transfer-timeout', async ({ task, taskService }) => {
 });
 
 // --- GÖREV 4: Müşteriye Eşzamanlı SMS Gönderme ---
+// --- GÖREV 4: Müşteriye Eşzamanlı SMS Gönderme ---
 client.subscribe('send-sms', async ({ task, taskService }) => {
-    const amount = parseFloat(task.variables.get('amount'));
-    const senderId = task.variables.get('senderId');
+    // 1. Gelen sürece göre tutarı bul (Normal transferde 'amount', faturada 'billAmount' gelir)
+    const rawAmount = task.variables.get('amount') || task.variables.get('billAmount');
+    const amount = parseFloat(rawAmount);
+    
+    // 2. Mesajın kime gideceğini bul
+    const senderId = task.variables.get('senderId') || task.variables.get('payerAccount') || 'Müşteri';
 
-    console.log(`\n✉️ [SMS SİSTEMİ TETİKLENDİ] ${senderId} telefonuna mesaj iletiliyor: "Sayın müşterimiz, ${amount} birim tutarındaki transferiniz başarıyla gerçekleşmiştir."`);
+    console.log(`\n✉️ [SMS SİSTEMİ TETİKLENDİ] ${senderId} hesabına mesaj iletiliyor: "Sayın müşterimiz, ${amount} TL tutarındaki işleminiz başarıyla gerçekleşmiştir."`);
     await safeComplete(taskService, task);
 });
 
@@ -581,4 +651,121 @@ client.subscribe('update-single-account', async ({ task, taskService }) => {
             await safeFailure(taskService, task, "Hesap güncelleme hatası");
         }
     });
+});
+
+// =======================================================================
+// FATURA ÖDEME SÜRECİ (GÜN SONU MUTABAKATI İÇİN PENDING KAYIT)
+// =======================================================================
+
+client.subscribe('Save-BillPayment-Transaction', async ({ task, taskService }) => {
+    // 1. BPMN 'Inputs' sekmesinde hazırladığımız verileri çekiyoruz
+    const islemZamani = task.variables.get('islemZamani');
+    const billAmount = parseFloat(task.variables.get('billAmount2Transaction')) || 0;
+    const subscriberNumber = task.variables.get('subscriberNumber');
+    const senderAccount = task.variables.get('senderAccount');
+    const institutionName = task.variables.get('institutionName') || 'Bilinmeyen Kurum';
+
+    // 2. Veritabanımız için zorunlu olan eşsiz (Unique) ID'leri üretiyoruz
+    // Not: Gerçek hayatta billReferenceNo İSKİ API'sinden DMN'e, oradan buraya gelir. 
+    // Şimdilik test amaçlı rastgele (mock) bir referans üretiyoruz.
+    const transactionId = 'TRX-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+    const billReferenceNo = task.variables.get('billReferenceNo') || ('REF-' + Math.floor(Math.random() * 1000000));
+
+    console.log(`\n🧾 [FATURA ÖDEME - EOD BEKLİYOR] Kurum: ${institutionName} | Abone: ${subscriberNumber} | Tutar: ${billAmount} TL`);
+
+    // 3. Yeni oluşturduğumuz eod_bill_payments tablosuna 'PENDING' statüsüyle Insert yapıyoruz
+        db.run(
+        `INSERT INTO eod_bill_payments 
+        (transaction_id, bank_account, institution_name, subscriber_number, bill_reference_no, bill_amount, status, transaction_date) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [transactionId, senderAccount, institutionName, subscriberNumber, billReferenceNo, billAmount, 'PENDING', islemZamani],
+        async (err) => {
+            if (!err) {
+                console.log(`   -> ✅ [BAŞARILI] İşlem EOD tablosuna kaydedildi. Dekont/TRX No: ${transactionId}`);
+                // İşlem başarılıysa Camunda'ya "Görev bitti, sıradaki kutucuğa geç" diyoruz.
+                await safeComplete(taskService, task);
+            } else {
+                console.error(`   -> ❌ [HATA] EOD tablosuna yazılamadı:`, err.message);
+                // Eğer SQL'de sorun çıkarsa Camunda motorunu kitlememek için 'Failure' fırlatıyoruz.
+                await safeFailure(taskService, task, "Veritabanı fatura kayıt hatası: " + err.message);
+            }
+        }
+    );
+});
+
+// Ayrıca BPMN'de eklediğin "Ödemeyi Onayla" ve "SMS Gönder" task'ları için de 
+// motorun havada kalmaması adına basit tamamlayıcı (dummy) bloklar ekleyelim:
+
+client.subscribe('fatura-odeme-onayla', async ({ task, taskService }) => {
+    console.log(`\n💸 [FATURA ONAYI] Fatura ödeme adımı onaylandı, bakiye düşümü ve gün sonu kaydına geçiliyor...`);
+    await safeComplete(taskService, task);
+});
+
+// (Mevcut send-sms subscribe bloğun varsa BPMN'deki topic adının eşleştiğinden emin ol)
+
+client.subscribe('deduct-bill-from-balance', async ({ task, taskService }) => {
+    // 1. Camunda'daki ana (Global) değişkenleri okuyoruz (Eşleme hatalarından kaçınmak için)
+    const billAmount = parseFloat(task.variables.get('billAmount'));
+    const payerAccount = task.variables.get('payerAccount'); // Başlangıçta api/pay-bill'den gelen hesap no
+    const processId = task.processInstanceId;
+
+    // 2. Doğru matematiği yapmak ve Dashboard için IBAN'ı bulmak adına güncel hesabı DB'den çekiyoruz
+    db.get(`SELECT id, balance, iban FROM Accounts WHERE account_number = ?`, [payerAccount], (err, row) => {
+        if (err || !row) {
+            return safeFailure(taskService, task, "Hesap bulunamadı");
+        }
+
+        const currentBalance = parseFloat(row.balance);
+        const remainingBalance = currentBalance - billAmount; // Tertemiz, sıfır hata Node.js matematiği
+
+        db.serialize(() => {
+            // 3. Bakiyeyi Düş
+            db.run(`UPDATE Accounts SET balance = ? WHERE id = ?`, [remainingBalance, row.id]);
+            
+            // 4. İŞLEM GEÇMİŞİNE (Transactions) YAZ
+            // DİKKAT: Dashboard'un okuyabilmesi için hesap numarasını değil, row.iban değerini yazıyoruz!
+            db.run(`INSERT INTO Transactions (sender_iban, receiver_iban, amount, fee_amount, loyalty_points, status, camunda_process_id, payment_type, payment_description) 
+                    VALUES (?, 'İSKİ-KURUM', ?, 0, 0, 'COMPLETED', ?, 'Fatura Ödeme', 'İSKİ Faturası')`, 
+                    [row.iban, billAmount, processId], 
+            async (insertErr) => {
+                if (!insertErr) {
+                    console.log(`\n💳 [BAKİYE GÜNCELLEME] Hesap No: ${payerAccount} | Eski: ${currentBalance} -> Yeni: ${remainingBalance} TL`);
+                    await safeComplete(taskService, task);
+                } else {
+                    await safeFailure(taskService, task, "Geçmişe kayıt hatası");
+                }
+            });
+        });
+    });
+});
+// =======================================================================
+// FATURA ÖDEME: İSKİ SORGULAMA GÖREVİ (DMN ÖNCESİ)
+// =======================================================================
+client.subscribe('fatura-sorgula', async ({ task, taskService }) => {
+    // 1. Camunda ana sürecinden gelen abone numarasını alıyoruz
+    const aboneNo = task.variables.get('aboneNo') || '12345678'; 
+
+    console.log(`\n🔎 [FATURA SORGUSU] ${aboneNo} numaralı İSKİ abonesi aranıyor...`);
+
+    try {
+        // 2. Kendi yazdığımız Mock API'ye HTTP GET isteği atıyoruz
+        const response = await axios.get(`http://localhost:3000/mock-api/iski/inquiry/${aboneNo}`);
+        const faturaBilgisi = response.data;
+
+        console.log(`   -> 📄 Fatura Bulundu! Tutar: ${faturaBilgisi.tutar} TL | Durum: ${faturaBilgisi.durum} | Ref: ${faturaBilgisi.faturaReferansNo}`);
+
+        // 3. Gelen verileri DMN Tablosunun ve BPMN'in kullanabilmesi için sürece (Output) aktarıyoruz
+        const processVariables = new Variables();
+        processVariables.set('billAmount', faturaBilgisi.tutar);
+        processVariables.set('faturaDurumu', faturaBilgisi.durum);
+        processVariables.set('dueDate', faturaBilgisi.sonOdemeTarihi);
+        processVariables.set('billReferenceNo', faturaBilgisi.faturaReferansNo);
+        processVariables.set('subscriberNumberAPI', faturaBilgisi.aboneNo);
+        processVariables.set('institutionName', 'İSKİ');
+
+        await safeComplete(taskService, task, processVariables);
+    } catch (error) {
+        console.error(`   -> ❌ İSKİ API Bağlantı Hatası:`, error.message);
+        await safeFailure(taskService, task, "Kurum servisine ulaşılamadı.");
+    }
 });

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/" xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/" xmlns:modeler="http://camunda.org/schema/modeler/1.0" xmlns:camunda="http://camunda.org/schema/1.0/dmn" xmlns:biodi="http://bpmn.io/schema/dmn/biodi/2.0" id="abonelikKisitlamalari" name="Abonelik Kısıtlamaları" namespace="http://camunda.org/schema/1.0/dmn" exporter="Camunda Modeler" exporterVersion="5.52.0" modeler:executionPlatform="Camunda Platform" modeler:executionPlatformVersion="7.24.0">
+  <decision id="abonelikKisitlari" name="Abonelik Kısıtları" camunda:historyTimeToLive="30">
+    <decisionTable id="DecisionTable_10rq4qj">
+      <input id="Input_1" label="Bakiye Kontrolü" biodi:width="192">
+        <inputExpression id="InputExpression_1" typeRef="double">
+          <text>Balance</text>
+        </inputExpression>
+      </input>
+      <input id="InputClause_0jqe8ra" label="limitAsimiVarMi">
+        <inputExpression id="LiteralExpression_063gfoy" typeRef="boolean">
+          <text>limitAsimiVarMi</text>
+        </inputExpression>
+      </input>
+      <input id="InputClause_1cq3yrd" label="kurumAPIAktifMi">
+        <inputExpression id="LiteralExpression_0xlyi18" typeRef="boolean">
+          <text>kurumAPIAktifMi</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="faturaOdemeIstegiSonucu" name="faturaOdemeIstegiSonucu" typeRef="string" />
+      <rule id="DecisionRule_0m5xl59">
+        <inputEntry id="UnaryTests_1l8okdn">
+          <text>&gt;=billAmount</text>
+        </inputEntry>
+        <inputEntry id="UnaryTests_0j2h2d6">
+          <text>false</text>
+        </inputEntry>
+        <inputEntry id="UnaryTests_1i3x7vd">
+          <text>true</text>
+        </inputEntry>
+        <outputEntry id="LiteralExpression_19syw2e">
+          <text>"Approve_And_Pay"</text>
+        </outputEntry>
+      </rule>
+      <rule id="DecisionRule_172pb4j">
+        <inputEntry id="UnaryTests_1h3xrej">
+          <text>&lt;billAmount</text>
+        </inputEntry>
+        <inputEntry id="UnaryTests_0lfnn0f">
+          <text></text>
+        </inputEntry>
+        <inputEntry id="UnaryTests_1ios28c">
+          <text>true</text>
+        </inputEntry>
+        <outputEntry id="LiteralExpression_122upqt">
+          <text>"Reject_Insufficient_Funds"</text>
+        </outputEntry>
+      </rule>
+      <rule id="DecisionRule_0o2d04n">
+        <inputEntry id="UnaryTests_03k7y2t">
+          <text>&gt;=billAmount</text>
+        </inputEntry>
+        <inputEntry id="UnaryTests_1kclfod">
+          <text>true</text>
+        </inputEntry>
+        <inputEntry id="UnaryTests_0no60ip">
+          <text>true</text>
+        </inputEntry>
+        <outputEntry id="LiteralExpression_1d2q7e5">
+          <text>"Require_Manual_Approval"</text>
+        </outputEntry>
+      </rule>
+      <rule id="DecisionRule_0i2nxhh">
+        <inputEntry id="UnaryTests_0wx5un3">
+          <text></text>
+        </inputEntry>
+        <inputEntry id="UnaryTests_05y3xla">
+          <text></text>
+        </inputEntry>
+        <inputEntry id="UnaryTests_0d2li15">
+          <text>false</text>
+        </inputEntry>
+        <outputEntry id="LiteralExpression_014yqay">
+          <text>"Retry_Later"</text>
+        </outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+  <dmndi:DMNDI>
+    <dmndi:DMNDiagram>
+      <dmndi:DMNShape id="Decision_07pcsk2_di" dmnElementRef="abonelikKisitlari">
+        <dc:Bounds height="80" width="180" x="160" y="100" />
+      </dmndi:DMNShape>
+    </dmndi:DMNDiagram>
+  </dmndi:DMNDI>
+</definitions>

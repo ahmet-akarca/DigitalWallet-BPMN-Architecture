@@ -372,10 +372,10 @@ export default function DashboardScreen() {
           <ScrollView contentContainerStyle={styles.expandedMenuContent} showsVerticalScrollIndicator={false}>
             <Text style={styles.menuSectionTitle}>Ödemeler</Text>
             <View style={styles.menuGrid}>
-              <MenuGridItem icon="receipt" label="Fatura Ödeme" />
+              <MenuGridItem icon="receipt" label="Fatura Ödeme" onPress={() => router.push('/BillPaymentDirect')} />
               <MenuGridItem icon="bank-outline" label="Kurum Ödemeleri" />
               <MenuGridItem icon="card-bulleted-outline" label="İstanbulkart / Ulaşım Kartları" />
-              <MenuGridItem icon="clock-outline" label="Otomatik Ödeme Talimatı" />
+              <MenuGridItem icon="clock-outline" label="Otomatik Ödeme Talimatı" onPress={() => router.push('/billPaymentScreen')} />
             </View>
 
             <Text style={styles.menuSectionTitle}>Hesaplar ve Kartlar</Text>
