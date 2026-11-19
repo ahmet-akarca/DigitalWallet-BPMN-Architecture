@@ -67,7 +67,7 @@ Uygulama arayüzü, "Neo-Banking" konseptiyle tamamen karanlık mod (Dark Mode) 
 - [x] Multi-Instance EOD (Gün Sonu) faiz tahakkuk sürecinin stabil hale getirilmesi.
 - [x] Fatura ve Kurum Ödemeleri: BPMN Service Task'leri üzerinden 3. parti (SOAP/REST) kurum API'lerine bağlanarak anlık tahsilat altyapısının kurulması.
 - [x] Otomatik Ödeme Talimatları: Camunda `Timer Start Event` mimarisi kullanılarak düzenli fatura ve abonelik ödemelerinin otomatize edilmesi.
-- [ ] **Yatırım Modülü (Kripto & Döviz/Altın): Harici borsa API'lerinden anlık veri çekilerek alım/satım (Trade) süreçlerinin BPMN akışlarına entegre edilmesi.
+- [ ] **Yatırım Modülü (Kripto & Döviz/Altın):** Harici borsa API'lerinden anlık veri çekilerek alım/satım (Trade) süreçlerinin BPMN akışlarına entegre edilmesi.
 - [ ] **Sanal Kart Yönetimi:** Kullanıcıların anlık limit belirleyip oluşturabileceği sanal kart altyapısının (Card Issuing) eklenmesi.
 - [ ] Loglama ve Gelişmiş Hata İzleme (Error Tracking) mekanizmalarının entegrasyonu.
 - [ ] Operasyon paneli (Admin Dashboard) üzerinden onay bekleyen süreçlerin (User Tasks) arayüz entegrasyonu.
