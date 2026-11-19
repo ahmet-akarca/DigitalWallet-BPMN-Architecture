@@ -2,8 +2,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,6 +17,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { io } from 'socket.io-client';
+import { useStore } from '../store/useStore';
 
 type Category = 'Su' | 'Elektrik' | 'Doğalgaz' | 'İnternet';
 type FundingSource = 'wallet' | 'card';
@@ -41,44 +44,14 @@ const CATEGORY_OPTIONS: {
   { label: 'İnternet', icon: 'wifi' },
 ];
 
-const INITIAL_INSTRUCTIONS: PaymentInstruction[] = [
-  {
-    id: '1',
-    category: 'Elektrik',
-    title: 'Ev Elektrik',
-    subscriberNumber: 'Abone No: 284 651 09',
-    status: 'Ödendi',
-    enabled: true,
-    icon: 'flash',
-    color: '#FFD166',
-  },
-  {
-    id: '2',
-    category: 'Su',
-    title: 'İSKİ Su',
-    subscriberNumber: 'Abone No: 631 904 28',
-    status: 'Ödendi',
-    enabled: true,
-    icon: 'water',
-    color: '#46C7FF',
-  },
-  {
-    id: '3',
-    category: 'İnternet',
-    title: 'Ev İnterneti',
-    subscriberNumber: 'Abone No: 100 492 77',
-    status: 'Bakiye Yetersiz',
-    enabled: false,
-    icon: 'wifi',
-    color: '#FF6B8A',
-  },
-];
+const INITIAL_INSTRUCTIONS: PaymentInstruction[] = [];
 
 const categoryIcon = (category: Category) =>
   CATEGORY_OPTIONS.find((option) => option.label === category)?.icon ?? 'receipt';
 
 export default function BillPaymentScreen() {
   const router = useRouter();
+  const { accounts, fetchWalletData } = useStore();
   const [instructions, setInstructions] = useState(INITIAL_INSTRUCTIONS);
   const [isSheetVisible, setSheetVisible] = useState(false);
   const [category, setCategory] = useState<Category>('Su');
@@ -88,35 +61,133 @@ export default function BillPaymentScreen() {
   const [limit, setLimit] = useState('');
   const [agreementAccepted, setAgreementAccepted] = useState(false);
 
-  const toggleInstruction = (id: string) => {
-    setInstructions((current) =>
-      current.map((instruction) =>
-        instruction.id === id ? { ...instruction, enabled: !instruction.enabled } : instruction,
-      ),
-    );
+  useEffect(() => {
+    fetchWalletData();
+  }, [fetchWalletData]);
+
+  useEffect(() => {
+    const loadInstructions = async () => {
+      try {
+        const response = await fetch('http://192.168.1.106:3000/api/payment-instructions/Ahmet_123');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Talimatlar yüklenemedi');
+
+        setInstructions(
+          (data.instructions || []).map((instruction: any) => {
+            const category = (instruction.institution_name as Category) || 'Su';
+            return {
+              id: instruction.id.toString(),
+              category,
+              title: instruction.title || `${category} Talimatı`,
+              subscriberNumber: `Abone No: ${instruction.subscriber_number}`,
+              status: instruction.last_payment_status === 'Bakiye Yetersiz' ? 'Bakiye Yetersiz' : 'Ödendi',
+              enabled: instruction.is_active === 1,
+              icon: categoryIcon(category),
+              color: category === 'Su' ? '#46C7FF' : category === 'Elektrik' ? '#FFD166' : category === 'Doğalgaz' ? '#FF9F43' : '#A78BFA',
+            };
+          }),
+        );
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    loadInstructions();
+  }, []);
+
+  useEffect(() => {
+    const socket = io('http://192.168.1.106:3000');
+
+    socket.on('payment-instruction-created', async () => {
+      try {
+        const response = await fetch('http://192.168.1.106:3000/api/payment-instructions/Ahmet_123');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Talimatlar yüklenemedi');
+
+        setInstructions(
+          (data.instructions || []).map((instruction: any) => {
+            const loadedCategory = (instruction.institution_name as Category) || 'Su';
+            return {
+              id: instruction.id.toString(),
+              category: loadedCategory,
+              title: instruction.title || `${loadedCategory} Talimatı`,
+              subscriberNumber: `Abone No: ${instruction.subscriber_number}`,
+              status: instruction.last_payment_status === 'Bakiye Yetersiz' ? 'Bakiye Yetersiz' : 'Ödendi',
+              enabled: instruction.is_active === 1,
+              icon: categoryIcon(loadedCategory),
+              color: loadedCategory === 'Su' ? '#46C7FF' : loadedCategory === 'Elektrik' ? '#FFD166' : loadedCategory === 'Doğalgaz' ? '#FF9F43' : '#A78BFA',
+            };
+          }),
+        );
+      } catch (error) {
+        console.error(error);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  const toggleInstruction = async (id: string) => {
+    const instruction = instructions.find((item) => item.id === id);
+    if (!instruction) return;
+
+    try {
+      const response = await fetch(`http://192.168.1.106:3000/api/payment-instructions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !instruction.enabled }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Talimat güncellenemedi');
+
+      setInstructions((current) =>
+        current.map((item) =>
+          item.id === id ? { ...item, enabled: !item.enabled } : item,
+        ),
+      );
+    } catch (error) {
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Talimat güncellenemedi');
+    }
   };
 
-  const saveInstruction = () => {
+  const saveInstruction = async () => {
     if (!subscriberNumber.trim() || !agreementAccepted) return;
 
-    setInstructions((current) => [
-      {
-        id: Date.now().toString(),
-        category,
-        title: `${category} Talimatı`,
-        subscriberNumber: `Abone No: ${subscriberNumber.trim()}`,
-        status: 'Ödendi',
-        enabled: true,
-        icon: categoryIcon(category),
-        color: '#A78BFA',
-      },
-      ...current,
-    ]);
-    setSubscriberNumber('');
-    setLimit('');
-    setHasLimit(false);
-    setAgreementAccepted(false);
-    setSheetVisible(false);
+    const paymentAccount =
+      accounts.find((account) => account.account_type === 'VADESIZ') || accounts[0];
+    if (!paymentAccount) {
+      Alert.alert('Hata', 'Ödeme için kullanılacak hesap bulunamadı.');
+      return;
+    }
+
+    try {
+      const response = await fetch('http://192.168.1.106:3000/api/payment-instructions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: 'Ahmet_123',
+          accountNumber: paymentAccount.account_number,
+          title: `${category} Talimatı`,
+          institutionName: category,
+          subscriberNumber: subscriberNumber.trim(),
+          fundingSource,
+          maxAmount: hasLimit ? limit.replace(',', '.') : null,
+          paymentDay: null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Talimat kaydedilemedi');
+
+      setSubscriberNumber('');
+      setLimit('');
+      setHasLimit(false);
+      setAgreementAccepted(false);
+      setSheetVisible(false);
+    } catch (error) {
+      Alert.alert('Hata', error instanceof Error ? error.message : 'Talimat kaydedilemedi');
+    }
   };
 
   return (

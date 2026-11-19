@@ -2,7 +2,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useStore } from '../store/useStore';
 import {
   Modal,
   Pressable,
@@ -29,24 +30,78 @@ const CATEGORY_OPTIONS: {
 
 export default function BillPaymentDirect() {
   const router = useRouter();
+  const { accounts, fetchWalletData } = useStore();
   const [category, setCategory] = useState<Category>('Elektrik');
   const [subscriberNumber, setSubscriberNumber] = useState('');
   const [amount, setAmount] = useState('');
   const [fundingSource, setFundingSource] = useState<FundingSource>('wallet');
   const [isSuccessVisible, setSuccessVisible] = useState(false);
+  const [billStatus, setBillStatus] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [isInquiryLoading, setIsInquiryLoading] = useState(false);
 
-  const canPay = subscriberNumber.trim().length > 0 && amount.trim().length > 0;
+  const canPay =
+    subscriberNumber.trim().length > 0 &&
+    amount.trim().length > 0 &&
+    billStatus === 'Ödenmedi';
+
+  useEffect(() => {
+    fetchWalletData();
+  }, [fetchWalletData]);
+
+  const handleBillInquiry = async () => {
+    if (!subscriberNumber.trim()) {
+      alert('Abone / tesisat numarası gerekli.');
+      return;
+    }
+
+    const institutionMockNames: Record<Category, string> = {
+      Su: 'iski',
+      Elektrik: 'tedas',
+      Doğalgaz: 'igdas',
+      İnternet: 'turktelekom',
+    };
+
+    setIsInquiryLoading(true);
+    setAmount('');
+    setBillStatus('');
+    setDueDate('');
+
+    try {
+      const mockName = institutionMockNames[category];
+      const response = await fetch(
+        `http://192.168.1.106:3000/mock-api/bill-institutions/${mockName}/inquiry/${subscriberNumber.trim()}`,
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Fatura sorgulanamadı');
+
+      setAmount(String(Number(data.tutar) || 0));
+      setBillStatus(data.durum || '');
+      setDueDate(data.sonOdemeTarihi || '');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Fatura sorgulanamadı.');
+    } finally {
+      setIsInquiryLoading(false);
+    }
+  };
 
   const handlePayment = async () => {
         if (!canPay) return;
+
+        const paymentAccount =
+          accounts.find((account) => account.account_type === 'VADESIZ') || accounts[0];
+        if (!paymentAccount) {
+          alert('Ödeme yapılacak hesap bulunamadı.');
+          return;
+        }
         
         try {
           const response = await fetch('http://192.168.1.106:3000/api/pay-bill', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              customerId: '1', // Veritabanındaki gerçek customer_id (Örn: '1')
-              accountNumber: 'SENIN_GERCEK_HESAP_NUMARAN', // Veritabanındaki gerçek account_number
+              customerId: 'Ahmet_123',
+              accountNumber: paymentAccount.account_number,
               subscriberNumber: subscriberNumber,
               category: category
             })
@@ -110,7 +165,12 @@ export default function BillPaymentDirect() {
                 <Pressable
                   accessibilityRole="button"
                   key={option.label}
-                  onPress={() => setCategory(option.label)}
+                  onPress={() => {
+                    setCategory(option.label);
+                    setAmount('');
+                    setBillStatus('');
+                    setDueDate('');
+                  }}
                   style={[styles.categoryOption, isSelected && styles.categoryOptionSelected]}
                 >
                   <MaterialCommunityIcons
@@ -131,27 +191,55 @@ export default function BillPaymentDirect() {
             <Text style={styles.fieldLabel}>Abone / Tesisat No</Text>
             <TextInput
               keyboardType="number-pad"
-              onChangeText={setSubscriberNumber}
+              onChangeText={(value) => {
+                setSubscriberNumber(value);
+                setAmount('');
+                setBillStatus('');
+                setDueDate('');
+              }}
               placeholder="Numarayı girin"
               placeholderTextColor="#77788A"
               style={styles.input}
               value={subscriberNumber}
             />
           </View>
-          <View style={styles.fieldGroup}>
-            <Text style={styles.fieldLabel}>Ödenecek tutar</Text>
-            <View style={styles.amountInput}>
-              <TextInput
-                keyboardType="decimal-pad"
-                onChangeText={setAmount}
-                placeholder="0,00"
-                placeholderTextColor="#77788A"
-                style={styles.amountTextInput}
-                value={amount}
-              />
-              <Text style={styles.currency}>₺</Text>
+
+          <Pressable
+            accessibilityRole="button"
+            disabled={!subscriberNumber.trim() || isInquiryLoading}
+            onPress={handleBillInquiry}
+            style={({ pressed }) => [
+              styles.inquiryButton,
+              (!subscriberNumber.trim() || isInquiryLoading) && styles.inquiryButtonDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            <MaterialCommunityIcons name="magnify" size={20} color="#FFFFFF" />
+            <Text style={styles.inquiryButtonText}>
+              {isInquiryLoading ? 'Fatura sorgulanıyor...' : 'Faturayı Sorgula'}
+            </Text>
+          </Pressable>
+
+          {amount && (
+            <View style={styles.billResultCard}>
+              <View style={styles.billResultHeader}>
+                <Text style={styles.billResultLabel}>Sorgu sonucu</Text>
+                <View
+                  style={[
+                    styles.billStatusBadge,
+                    billStatus === 'Ödenmedi' ? styles.billStatusPending : styles.billStatusPaid,
+                  ]}
+                >
+                  <Text style={styles.billStatusText}>{billStatus}</Text>
+                </View>
+              </View>
+              <Text style={styles.billAmountText}>{Number(amount).toLocaleString('tr-TR', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })} ₺</Text>
+              {dueDate ? <Text style={styles.billDueText}>Son ödeme tarihi: {dueDate}</Text> : null}
             </View>
-          </View>
+          )}
 
           <Text style={styles.sectionTitle}>Ödeme kaynağı</Text>
           <View style={styles.fundingRow}>
@@ -268,9 +356,35 @@ const styles = StyleSheet.create({
   fieldGroup: { marginBottom: 14 },
   fieldLabel: { color: '#C8C7D5', fontSize: 12, fontWeight: '700', marginBottom: 9 },
   input: { backgroundColor: '#020024', borderColor: '#2A2770', borderRadius: 12, borderWidth: 1, color: '#FFFFFF', fontSize: 14, height: 52, paddingHorizontal: 16 },
-  amountInput: { alignItems: 'center', backgroundColor: '#020024', borderColor: '#2A2770', borderRadius: 12, borderWidth: 1, flexDirection: 'row', height: 52 },
-  amountTextInput: { color: '#FFFFFF', flex: 1, fontSize: 14, paddingHorizontal: 16 },
-  currency: { color: '#ED21D9', fontSize: 16, fontWeight: '800', marginRight: 16 },
+  inquiryButton: {
+    alignItems: 'center',
+    backgroundColor: '#1410B4',
+    borderColor: '#ED21D9',
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    height: 52,
+    justifyContent: 'center',
+  },
+  inquiryButtonDisabled: { opacity: 0.45 },
+  inquiryButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+  billResultCard: {
+    backgroundColor: '#020024',
+    borderColor: '#2A2770',
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 16,
+  },
+  billResultHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  billResultLabel: { color: '#C8C7D5', fontSize: 12, fontWeight: '700' },
+  billStatusBadge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5 },
+  billStatusPending: { backgroundColor: 'rgba(237, 33, 217, 0.18)' },
+  billStatusPaid: { backgroundColor: 'rgba(71, 230, 161, 0.18)' },
+  billStatusText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
+  billAmountText: { color: '#FFFFFF', fontSize: 24, fontWeight: '800', marginTop: 14 },
+  billDueText: { color: '#A8A8BA', fontSize: 12, marginTop: 8 },
   fundingRow: { gap: 8 },
   fundingOption: { alignItems: 'center', backgroundColor: 'transparent', borderColor: '#2A2770', borderRadius: 12, borderWidth: 1, flexDirection: 'row', minHeight: 54, padding: 14 },
   fundingOptionSelected: { backgroundColor: 'rgba(20, 16, 180, 0.35)', borderColor: '#ED21D9' },

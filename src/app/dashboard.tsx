@@ -50,6 +50,34 @@ function MenuGridItem({ icon, label,onPress }: { icon: keyof typeof MaterialComm
   );
 }
 
+function getTransactionIcon(item: Transaction): keyof typeof MaterialCommunityIcons.glyphMap {
+  if (item.isReward) return 'gift-outline';
+  if (item.status === 'pending') return 'clock-outline';
+  if (item.status === 'rejected') return 'close-circle-outline';
+
+  const transactionText =
+    `${item.title || ''} ${item.subtitle || ''} ${item.paymentType || ''} ${item.paymentDescription || ''}`.toLocaleUpperCase('tr-TR');
+
+  if (transactionText.includes('İSKİ') || transactionText.includes('SU FATURASI') || transactionText.includes('SU KURUM')) {
+    return 'water';
+  }
+  if (
+    transactionText.includes('TEDAŞ') ||
+    transactionText.includes('ELEKTRİK') ||
+    transactionText.includes('ELEKTRIK')
+  ) {
+    return 'flash';
+  }
+  if (transactionText.includes('İGDAŞ') || transactionText.includes('IGDAS') || transactionText.includes('DOĞALGAZ')) {
+    return 'fire';
+  }
+  if (transactionText.includes('TÜRK TELEKOM') || transactionText.includes('TURK TELEKOM') || transactionText.includes('İNTERNET')) {
+    return 'wifi';
+  }
+
+  return 'swap-horizontal';
+}
+
 const NeonDgpays = ({ refreshing }: { refreshing: boolean }) => {
   const letters = ['A','H','B','A','N','K'];
   const animValues = useRef(letters.map(() => new RNAnimated.Value(1))).current;
@@ -225,7 +253,11 @@ export default function DashboardScreen() {
   const renderTransaction = ({ item }: { item: Transaction }) => (
     <View style={[styles.transactionRow, { opacity: item.status === 'pending' ? 0.6 : 1 }]}>
       <View style={[styles.transactionIcon, { backgroundColor: item.color }]}>
-        <Text style={styles.transactionGlyph}>{item.glyph}</Text>
+        <MaterialCommunityIcons
+          name={getTransactionIcon(item)}
+          size={20}
+          color="#FFFFFF"
+        />
       </View>
       <View style={styles.transactionInfo}>
         <Text style={[styles.transactionTitle, item.isReward && { color: '#ED21D9' }]}>

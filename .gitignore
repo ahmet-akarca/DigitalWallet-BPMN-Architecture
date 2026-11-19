@@ -8,3 +8,5 @@ bank.db-shm
 
 expo-env.d.ts
 # @end expo-cli
+bank.db
+iski_eod_settlement.csv
